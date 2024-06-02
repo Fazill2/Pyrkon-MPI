@@ -12,6 +12,7 @@
 #define HELD 1
 #define REQUESTED 2
 int rank, size;
+// to trzeba będzie ustawiać z linii komend
 int num_tickets = 3;
 int local_clock = 0;
 int reply_count = 0;
@@ -80,6 +81,8 @@ void release_ticket() {
 
 int main(int argc, char **argv)
 {
+    num_tickets = atoi(argv[1]);
+    printf("Liczba biletów na Pyrkon: %d\n", num_tickets);
 	MPI_Init(&argc, &argv);
     
 
@@ -93,7 +96,7 @@ int main(int argc, char **argv)
         sleep(1);
         if (ticket_state == RELEASED) {
             request_ticket();
-            sleep(3);
+            sleep(3); // symulacja robienia czegoś
         } else if (ticket_state == HELD) {
             release_ticket();
             break;
