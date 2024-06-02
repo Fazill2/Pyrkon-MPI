@@ -12,8 +12,7 @@
 #define HELD 1
 #define REQUESTED 2
 int rank, size;
-// to trzeba będzie ustawiać z linii komend
-int num_tickets = 3;
+int num_tickets;
 int local_clock = 0;
 int reply_count = 0;
 int* ticket_queue;
