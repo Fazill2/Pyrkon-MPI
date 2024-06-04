@@ -14,31 +14,52 @@
 #define HELD 1
 #define REQUESTED 2
 int rank, size;
+// liczba biletów na Pyrkon
 int num_tickets;
+// zegar Lamporta
 int local_clock = 0;
+// liczba odpowiedzi na request biletu
 int reply_count = 0;
+// kolejka procesów czekających na bilet
 int* ticket_queue;
+// rozmiar kolejki procesów czekających na bilet
 int ticket_queue_size = 0;
+// liczba warsztatów
 int num_of_trainings;
+// tablica z rozmiarami warsztatów
 int* trainings;
-int training_queue_size = 0;
+// kolejka procesów czekających na warsztat
 int* training_queue;
+// rozmiar kolejki procesów czekających na warsztat
+int training_queue_size = 0;
+// indeksy warsztatów, które proces ma zamiar odwiedzić
 int* training_indices;
-// int[] funZone = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+// indeks aktualnie odwiedzanego warsztatu
+int training_index;
+// stan trenowania
+int training_state = RELEASED;
+// stan biletu na Pyrkon
 int ticket_state = RELEASED;
+// timestamp ostatniego requestu
+int last_request = 0;
 
 MPI_Datatype MPI_PAKIET_T;
 
+// struktura pakietu
 typedef struct {
     int ts;
     int src;
     int data;
 } packet_t;
 
+// znacznik czasu
 int t;
+// czy pyrkon się skończył
 bool pyrkon_done = false;
+// czy proces zakończył swoje działanie na Pyrkonie
 bool process_done_with_pyrkon = false;
 
+// porównanie znaczników czasu, w przypadku równości porównanie numerów procesów
 bool compare_timestamps(int ts1, int src1, int ts2, int src2) {
     return (ts1 < ts2) || (ts1 == ts2 && src1 < src2);
 }
@@ -49,7 +70,7 @@ void request_ticket(){
 
     ticket_state = REQUESTED;
     local_clock++;
-
+    last_request = local_clock;
     packet_t packet = {local_clock, rank, 0};
     for (i = 0; i < size; i++){
         if (i != rank) {
@@ -89,15 +110,15 @@ void pyrkon() {
         int rcvRank = packet.src;
         int rcvClock = packet.ts;
         int data = packet.data;
+        local_clock = (rcvClock > local_clock ? rcvClock : local_clock) + 1;
         if (status.MPI_TAG == TICKET_REQUEST_TAG) {
-            printf("Proces %d otrzymał request od procesu %d ze znacznikiem czasu %d i własnym znacznikiem %d, porównanie %d\n", rank, rcvRank, rcvClock, t, (ticket_state == REQUESTED && (rcvClock, rcvRank) < (t, rank)));
-            if (ticket_state == HELD || (ticket_state == REQUESTED && compare_timestamps(t, rank, rcvClock, rcvRank))) {
+            printf("Proces %d otrzymał request od procesu %d ze znacznikiem czasu %d i własnym znacznikiem %d, porównanie %d\n", rank, rcvRank, rcvClock, last_request, (ticket_state == REQUESTED && compare_timestamps(last_request, rank, rcvClock, rcvRank)));
+            if (ticket_state == HELD || (ticket_state == REQUESTED && compare_timestamps(last_request, rank, rcvClock, rcvRank))) {
                 ticket_queue[ticket_queue_size++] = status.MPI_SOURCE;
                 printf("Proces %d dodaje proces %d do kolejki\n", rank, status.MPI_SOURCE);
             } else {
                 printf("Proces %d odpowiada procesowi %d\n", rank, status.MPI_SOURCE);
                 packet_t send_packet = {local_clock, rank, 0};
-                // MPI_Send(&local_clock, 1, MPI_INT, status.MPI_SOURCE, TICKET_REPLY_TAG, MPI_COMM_WORLD);
                 MPI_Send(&send_packet, 1, MPI_PAKIET_T, status.MPI_SOURCE, TICKET_REPLY_TAG, MPI_COMM_WORLD);
             }
         } else if (status.MPI_TAG == TICKET_REPLY_TAG) {
@@ -117,6 +138,13 @@ void pyrkon() {
 int main(int argc, char **argv)
 {
     num_tickets = atoi(argv[1]);
+    // num_of_trainings = atoi(argv[2]);
+    // trainings = (int*)malloc(num_of_trainings * sizeof(int));
+    // training_queue = (int*)malloc(size * sizeof(int));
+    // training_indices = (int*)malloc(1 * sizeof(int));
+    // for (int i = 0; i < num_of_trainings; i++) {
+    //     trainings[i] = atoi(argv[3]);
+    // }
     printf("Liczba biletów na Pyrkon: %d\n", num_tickets);
     printf("Liczba warsztatów: %d\n", size);
 	MPI_Init(&argc, &argv);
@@ -140,7 +168,6 @@ int main(int argc, char **argv)
 
     
     while (true){
-        sleep(1);
         pyrkon();
     }
     MPI_Finalize();
