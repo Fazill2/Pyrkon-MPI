@@ -21,11 +21,16 @@ int ticket_queue_size = 0;
 // int[] funZone = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 int ticket_state = RELEASED;
 
+int t;
+bool pyrkon_done = false;
+bool process_done_with_pyrkon = false;
 
-
+bool compare_timestamps(int ts1, int src1, int ts2, int src2) {
+    return (ts1 < ts2) || (ts1 == ts2 && src1 < src2);
+}
 
 void request_ticket(){
-    int i, t;
+    int i;
     MPI_Status status;
 
     ticket_state = REQUESTED;
@@ -36,17 +41,39 @@ void request_ticket(){
             MPI_Send(&local_clock, 1, MPI_INT, i, TICKET_REQUEST_TAG, MPI_COMM_WORLD);
         }
     }
-
     reply_count = 0;
     t = local_clock;
+}
 
-    for (;;) {
+void release_ticket() {
+    int i;
+    ticket_state = RELEASED;
+    printf("Proces %d zwalnia bilet na Pyrkon\n", rank);
+    for (i = 0; i < ticket_queue_size; i++) {
+        MPI_Send(&local_clock, 1, MPI_INT, ticket_queue[i], TICKET_REPLY_TAG, MPI_COMM_WORLD);
+    }
+
+    ticket_queue_size = 0;
+}
+
+void pyrkon() {
+    if (ticket_state == RELEASED) {
+        request_ticket();
+        t = local_clock;
+    } else if (ticket_state == HELD && process_done_with_pyrkon) {
+        release_ticket();
+    } else if (ticket_state == HELD && !process_done_with_pyrkon){
+        printf("Proces %d jest na Pyrkonie\n", rank);
+        sleep(5);
+        process_done_with_pyrkon = true;
+    } else {
+        MPI_Status status;
         MPI_Recv(&local_clock, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         int rcvRank = status.MPI_SOURCE;
         int rcvClock = local_clock;
         if (status.MPI_TAG == TICKET_REQUEST_TAG) {
             printf("Proces %d otrzymał request od procesu %d ze znacznikiem czasu %d i własnym znacznikiem %d, porównanie %d\n", rank, rcvRank, rcvClock, t, (ticket_state == REQUESTED && (rcvClock, rcvRank) < (t, rank)));
-            if (ticket_state == HELD || (ticket_state == REQUESTED && (rcvClock, rcvRank) < (t, rank))) {
+            if (ticket_state == HELD || (ticket_state == REQUESTED && compare_timestamps(t, rank, rcvClock, rcvRank))) {
                 ticket_queue[ticket_queue_size++] = status.MPI_SOURCE;
                 printf("Proces %d dodaje proces %d do kolejki\n", rank, status.MPI_SOURCE);
             } else {
@@ -59,21 +86,10 @@ void request_ticket(){
             if (reply_count >= (size - num_tickets)) {
                 ticket_state = HELD;
                 printf("Proces %d posiada bilet na Pyrkon\n", rank);
-                break;
+                sleep(5);
             }
         }
     }
-}
-
-void release_ticket() {
-    int i;
-    ticket_state = RELEASED;
-    printf("Proces %d zwalnia bilet na Pyrkon\n", rank);
-    for (i = 0; i < ticket_queue_size; i++) {
-        MPI_Send(&local_clock, 1, MPI_INT, ticket_queue[i], TICKET_REPLY_TAG, MPI_COMM_WORLD);
-    }
-
-    ticket_queue_size = 0;
 }
 
 
@@ -93,13 +109,7 @@ int main(int argc, char **argv)
     
     while (true){
         sleep(1);
-        if (ticket_state == RELEASED) {
-            request_ticket();
-            sleep(3); // symulacja robienia czegoś
-        } else if (ticket_state == HELD) {
-            release_ticket();
-            break;
-        }
+        pyrkon();
     }
     MPI_Finalize();
 }
