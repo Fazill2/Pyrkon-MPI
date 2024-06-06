@@ -24,6 +24,8 @@ int reply_count = 0;
 int* ticket_queue;
 // rozmiar kolejki procesów czekających na bilet
 int ticket_queue_size = 0;
+// request id procesów czekających na warsztat
+int* ticket_request_ids;
 // liczba warsztatów
 int num_of_trainings;
 // tablica z rozmiarami warsztatów
@@ -50,6 +52,7 @@ typedef struct {
     int ts;
     int src;
     int data;
+    int requestId;
 } packet_t;
 
 // znacznik czasu
@@ -71,13 +74,13 @@ void request_ticket(){
     ticket_state = REQUESTED;
     local_clock++;
     last_request = local_clock;
-    packet_t packet = {local_clock, rank, 0};
+    reply_count = 0;
+    packet_t packet = {local_clock, rank, 0, last_request};
     for (i = 0; i < size; i++){
         if (i != rank) {
             MPI_Send(&packet, 1, MPI_PAKIET_T, i, TICKET_REQUEST_TAG, MPI_COMM_WORLD);
         }
     }
-    reply_count = 0;
     t = local_clock;
 }
 
@@ -87,8 +90,12 @@ void release_ticket() {
     printf("Proces %d zwalnia bilet na Pyrkon\n", rank);
     packet_t send_packet = {local_clock, rank, 0};
     for (i = 0; i < ticket_queue_size; i++) {
+        packet_t send_packet = {local_clock, rank, 0, ticket_request_ids[i]};
+        // printf("Request id: %d\n", send_packet.requestId);
         MPI_Send(&send_packet, 1, MPI_PAKIET_T, ticket_queue[i], TICKET_REPLY_TAG, MPI_COMM_WORLD);
     }
+    ticket_request_ids = (int*)realloc(ticket_request_ids, 1 * sizeof(int));
+    ticket_queue = (int*)realloc(ticket_queue, 1 * sizeof(int));
 
     ticket_queue_size = 0;
 }
@@ -98,9 +105,12 @@ void pyrkon() {
         request_ticket();
         t = local_clock;
     } else if (ticket_state == HELD && process_done_with_pyrkon) {
+        local_clock++;
         release_ticket();
+        process_done_with_pyrkon = false;
     } else if (ticket_state == HELD && !process_done_with_pyrkon){
         printf("Proces %d jest na Pyrkonie\n", rank);
+        local_clock++;
         sleep(5);
         process_done_with_pyrkon = true;
     } else {
@@ -110,24 +120,35 @@ void pyrkon() {
         int rcvRank = packet.src;
         int rcvClock = packet.ts;
         int data = packet.data;
+        int requestId = packet.requestId;
+        // printf("Timestamp: %d, src: %d, data: %d, requestId: %d\n", rcvClock, rcvRank, data, requestId);
+        // printf("Received request id: %d\n", requestId);
         local_clock = (rcvClock > local_clock ? rcvClock : local_clock) + 1;
         if (status.MPI_TAG == TICKET_REQUEST_TAG) {
-            printf("Proces %d otrzymał request od procesu %d ze znacznikiem czasu %d i własnym znacznikiem %d, porównanie %d\n", rank, rcvRank, rcvClock, last_request, (ticket_state == REQUESTED && compare_timestamps(last_request, rank, rcvClock, rcvRank)));
+            // printf("Proces %d otrzymał request od procesu %d ze znacznikiem czasu %d i własnym znacznikiem %d, porównanie %d\n", rank, rcvRank, rcvClock, last_request, (ticket_state == REQUESTED && compare_timestamps(last_request, rank, rcvClock, rcvRank)));
             if (ticket_state == HELD || (ticket_state == REQUESTED && compare_timestamps(last_request, rank, rcvClock, rcvRank))) {
-                ticket_queue[ticket_queue_size++] = status.MPI_SOURCE;
-                printf("Proces %d dodaje proces %d do kolejki\n", rank, status.MPI_SOURCE);
+                ticket_request_ids = (int*)realloc(ticket_request_ids, (ticket_queue_size + 1) * sizeof(int));
+                ticket_queue = (int*)realloc(ticket_queue, (ticket_queue_size + 1) * sizeof(int));
+                ticket_request_ids[ticket_queue_size] = requestId;
+                ticket_queue[ticket_queue_size] = rcvRank;
+                ticket_queue_size++;
+                
+                // printf("Proces %d dodaje proces %d do kolejki\n", rank, status.MPI_SOURCE);
             } else {
-                printf("Proces %d odpowiada procesowi %d\n", rank, status.MPI_SOURCE);
-                packet_t send_packet = {local_clock, rank, 0};
+                // printf("Proces %d odpowiada procesowi %d\n", rank, status.MPI_SOURCE);
+                packet_t send_packet = {local_clock, rank, 0, requestId};
                 MPI_Send(&send_packet, 1, MPI_PAKIET_T, status.MPI_SOURCE, TICKET_REPLY_TAG, MPI_COMM_WORLD);
             }
         } else if (status.MPI_TAG == TICKET_REPLY_TAG) {
-            reply_count++;
-            printf("Proces %d otrzymał odpowiedź od procesu %d, reply count %d\n", rank, rcvRank, reply_count);
-            if (reply_count >= (size - num_tickets)) {
-                ticket_state = HELD;
-                printf("Proces %d posiada bilet na Pyrkon\n", rank);
-                sleep(5);
+            if (requestId == last_request) {
+                reply_count++;
+                // printf("Proces %d otrzymał odpowiedź od procesu %d, reply count %d\n", rank, rcvRank, reply_count);
+                if (reply_count >= (size - num_tickets)) {
+                    ticket_state = HELD;
+
+                    printf("Proces %d posiada bilet na Pyrkon\n", rank);
+                    sleep(5);
+                }
             }
         }
     }
@@ -145,17 +166,19 @@ int main(int argc, char **argv)
     // for (int i = 0; i < num_of_trainings; i++) {
     //     trainings[i] = atoi(argv[3]);
     // }
-    printf("Liczba biletów na Pyrkon: %d\n", num_tickets);
-    printf("Liczba warsztatów: %d\n", size);
+    // printf("Liczba biletów na Pyrkon: %d\n", num_tickets);
+    // printf("Liczba warsztatów: %d\n", size);
 	MPI_Init(&argc, &argv);
-    const int nitems=3; /* bo packet_t ma trzy pola */
-    int       blocklengths[3] = {1,1,1};
-    MPI_Datatype typy[3] = {MPI_INT, MPI_INT, MPI_INT};
+    const int nitems=4; /* bo packet_t ma trzy pola */
+    int       blocklengths[4] = {1,1,1,1};
+    MPI_Datatype typy[4] = {MPI_INT, MPI_INT, MPI_INT, MPI_INT};
 
-    MPI_Aint     offsets[3]; 
+    MPI_Aint     offsets[4]; 
     offsets[0] = offsetof(packet_t, ts);
     offsets[1] = offsetof(packet_t, src);
     offsets[2] = offsetof(packet_t, data);
+    offsets[3] = offsetof(packet_t, requestId); 
+
 
     MPI_Type_create_struct(nitems, blocklengths, offsets, typy, &MPI_PAKIET_T);
     MPI_Type_commit(&MPI_PAKIET_T);
@@ -165,6 +188,7 @@ int main(int argc, char **argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     ticket_queue = (int*)malloc(size * sizeof(int));
+    ticket_request_ids = (int*)malloc(1 * sizeof(int));
 
     
     while (true){
