@@ -9,6 +9,7 @@
 #define TICKET_REPLY_TAG 2
 #define TRAINING_REQUEST_TAG 3
 #define TRAINING_REPLY_TAG 4
+#define PYRKON_END_TAG 5
 
 #define RELEASED 0
 #define HELD 1
@@ -24,7 +25,7 @@ int reply_count = 0;
 int* ticket_queue;
 // rozmiar kolejki procesów czekających na bilet
 int ticket_queue_size = 0;
-// request id procesów czekających na warsztat
+// request id procesów czekających na proces, używane do sprawdzania czy odpowiedź dotyczy aktualnego requestu
 int* ticket_request_ids;
 // liczba warsztatów
 int num_of_trainings;
@@ -44,6 +45,8 @@ int training_state = RELEASED;
 int ticket_state = RELEASED;
 // timestamp ostatniego requestu
 int last_request = 0;
+
+int pyrkon_end_count = 0;
 
 MPI_Datatype MPI_PAKIET_T;
 
@@ -97,17 +100,31 @@ void release_ticket() {
     ticket_request_ids = (int*)realloc(ticket_request_ids, 1 * sizeof(int));
     ticket_queue = (int*)realloc(ticket_queue, 1 * sizeof(int));
 
+
+
     ticket_queue_size = 0;
+
+    packet_t packet = {local_clock, rank, 0, 0};
+    for (i = 0; i < size; i++) {
+        if (i != rank) {
+            MPI_Send(&packet, 1, MPI_PAKIET_T, i, PYRKON_END_TAG, MPI_COMM_WORLD);
+        }
+    }
 }
 
 void pyrkon() {
-    if (ticket_state == RELEASED) {
+    if (pyrkon_done) {
+        sleep(5);
+        printf("Proces %d kończy działanie\n", rank);
+        MPI_Finalize();
+        exit(0);
+    }
+    if (ticket_state == RELEASED && !process_done_with_pyrkon) {
         request_ticket();
         t = local_clock;
     } else if (ticket_state == HELD && process_done_with_pyrkon) {
         local_clock++;
         release_ticket();
-        process_done_with_pyrkon = false;
     } else if (ticket_state == HELD && !process_done_with_pyrkon){
         printf("Proces %d jest na Pyrkonie\n", rank);
         local_clock++;
@@ -145,10 +162,15 @@ void pyrkon() {
                 // printf("Proces %d otrzymał odpowiedź od procesu %d, reply count %d\n", rank, rcvRank, reply_count);
                 if (reply_count >= (size - num_tickets)) {
                     ticket_state = HELD;
-
+                    reply_count = 0;
                     printf("Proces %d posiada bilet na Pyrkon\n", rank);
                     sleep(5);
                 }
+            }
+        } else if (status.MPI_TAG == PYRKON_END_TAG) {
+            pyrkon_end_count++;
+            if (pyrkon_end_count >= size - 1) {
+                pyrkon_done = true;
             }
         }
     }
