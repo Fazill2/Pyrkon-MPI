@@ -150,10 +150,10 @@ void release_workshop() {
 
 void pyrkon() {
     if (pyrkon_done && process_done_with_pyrkon && ticket_state == RELEASED) {
-        sleep(5);
-        printf("Proces %d kończy działanie\n", rank);
-        MPI_Finalize();
-        exit(0);
+        printf("Proces %d kończy pyrkon\n", rank);
+        // MPI_Finalize();
+        // exit(0);
+        sleep(1);
         pyrkon_done = false;
         process_done_with_pyrkon = false;
     }
@@ -207,12 +207,12 @@ void pyrkon() {
                         workshop_indices[i] = rand() % num_of_workshops;
                     }
                     printf("Proces %d wybiera warsztaty: %d %d %d\n", rank, workshop_indices[0], workshop_indices[1], workshop_indices[2]);
-                    sleep(5);
                 }
             }
-        } else if (status.MPI_TAG == PYRKON_END_TAG) {
+        } else if (status.MPI_TAG == PYRKON_END_TAG && !pyrkon_done) {
             pyrkon_end_count++;
             if (pyrkon_end_count >= size - 1) {
+                pyrkon_end_count = 0;
                 pyrkon_done = true;
             }
         } else if (status.MPI_TAG == WORKSHOP_REQUEST_TAG) {
@@ -238,8 +238,9 @@ void pyrkon() {
                     workshop_state = HELD;
                     reply_count = 0;
                     printf("Proces %d uczestniczy w warsztacie %d\n", rank, workshop_index);
-                    sleep(5);
+                    sleep(rand() % 5 + 1);
                     release_workshop();
+                    printf("Proces %d zakończył warsztat %d\n", rank, workshop_index);
                     workshop_state = RELEASED;
                 }
             }
