@@ -156,6 +156,7 @@ void pyrkon() {
         sleep(1);
         pyrkon_done = false;
         process_done_with_pyrkon = false;
+	last_request = -1;
     }
     if (ticket_state == RELEASED && !process_done_with_pyrkon) {
         request_ticket();
@@ -242,6 +243,7 @@ void pyrkon() {
                     release_workshop();
                     printf("Proces %d zakończył warsztat %d\n", rank, workshop_index);
                     workshop_state = RELEASED;
+		    last_request = -1;
                 }
             }
         }
